@@ -8,11 +8,12 @@ require 'sidekiq/batch/version'
 
 module Sidekiq
   class Batch
-    class NoBlockGivenError < StandardError; end
+    class NoBlockGivenError < StandardError
+    end
 
     BID_EXPIRE_TTL = 2_592_000
 
-    attr_reader :bid, :description, :callback_queue, :created_at
+    attr_reader :bid, :description, :callback_queue, :created_at, :current_shard
 
     def initialize(existing_bid = nil)
       @bid            = existing_bid || SecureRandom.urlsafe_base64(10)
@@ -33,14 +34,19 @@ module Sidekiq
       persist_bid_attr('callback_queue', callback_queue)
     end
 
+    def current_shard=(current_shard)
+      @current_shard = current_shard
+      persist_bid_attr('current_shard', current_shard)
+    end
+
     def on(event, callback, options = {})
       return unless %w(success complete).include?(event.to_s)
       callback_key = "#{@bidkey}-callbacks-#{event}"
       Sidekiq.redis do |r|
         r.multi do
           r.sadd(callback_key, JSON.unparse({
-                                                callback: callback,
-                                                opts:     options
+                                              callback: callback,
+                                              opts:     options
                                             }))
           r.expire(callback_key, BID_EXPIRE_TTL)
         end
@@ -162,30 +168,33 @@ module Sidekiq
         callback_key = "#{batch_key}-callbacks-#{event}"
         status       = Status.new(bid)
         return if status.completed?
-        callbacks, queue = Sidekiq.redis do |r|
+        callbacks, queue, current_shard = Sidekiq.redis do |r|
           r.multi do
             r.smembers(callback_key)
             r.hget(batch_key, "callback_queue")
+            r.hget(batch_key, "current_shard")
             r.set("#{batch_key}-callback_completed", 'true')
             r.expire("#{batch_key}-callback_completed", BID_EXPIRE_TTL)
           end
         end
-        queue            ||= "default"
-        callback_args    = callbacks.reduce([]) do |memo, jcb|
+        queue                           ||= "default"
+        current_shard                   ||= "default"
+        callback_args                   = callbacks.reduce([]) do |memo, jcb|
           cb = Sidekiq.load_json(jcb)
           memo << [cb['callback'], event, cb['opts'], bid]
         end
 
         Sidekiq.logger.debug { "Enqueue callback bid: #{bid} event: #{event} args: #{callback_args.inspect}" }
         cleanup_redis('bid')
-        push_callbacks callback_args, queue
+        push_callbacks callback_args, queue, current_shard
       end
 
-      def push_callbacks args, queue
+      def push_callbacks args, queue, current_shard
         Sidekiq::Client.push_bulk(
-            'class' => Sidekiq::Batch::Callback::Worker,
-            'args'  => args,
-            'queue' => queue
+          'class' => Sidekiq::Batch::Callback::Worker,
+          'args'  => args,
+          'queue' => queue,
+          'tags'  => [current_shard]
         ) unless args.empty?
       end
 
@@ -193,16 +202,16 @@ module Sidekiq
         Sidekiq.logger.debug { "Cleaning redis of batch #{bid}" }
         Sidekiq.redis do |r|
           r.del(
-              "BID-#{bid}",
-              "BID-#{bid}-callbacks-complete",
-              "BID-#{bid}-completed",
-              "BID-#{bid}-callbacks-success",
-              "BID-#{bid}-failed",
+            "BID-#{bid}",
+            "BID-#{bid}-callbacks-complete",
+            "BID-#{bid}-completed",
+            "BID-#{bid}-callbacks-success",
+            "BID-#{bid}-failed",
 
-              "BID-#{bid}-success",
-              "BID-#{bid}-complete",
-              "BID-#{bid}-jids",
-          )
+            "BID-#{bid}-success",
+            "BID-#{bid}-complete",
+            "BID-#{bid}-jids",
+            )
         end
       end
     end
