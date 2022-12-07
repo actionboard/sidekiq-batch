@@ -43,12 +43,12 @@ module Sidekiq
       return unless %w(success complete).include?(event.to_s)
       callback_key = "#{@bidkey}-callbacks-#{event}"
       Sidekiq.redis do |r|
-        r.multi do
-          r.sadd(callback_key, JSON.unparse({
-                                              callback: callback,
-                                              opts:     options
-                                            }))
-          r.expire(callback_key, BID_EXPIRE_TTL)
+        r.multi do |pipeline|
+          pipeline.sadd(callback_key, [JSON.unparse({
+                                                      callback: callback,
+                                                      opts: options
+                                                    })])
+          pipeline.expire(callback_key, BID_EXPIRE_TTL)
         end
       end
     end
@@ -62,9 +62,9 @@ module Sidekiq
         if !@existing && !@initialized
 
           Sidekiq.redis do |r|
-            r.multi do
-              r.hset(@bidkey, "created_at", @created_at)
-              r.expire(@bidkey, BID_EXPIRE_TTL)
+            r.multi do |pipeline|
+              pipeline.hset(@bidkey, "created_at", @created_at)
+              pipeline.expire(@bidkey, BID_EXPIRE_TTL)
             end
           end
 
@@ -84,13 +84,13 @@ module Sidekiq
         return [] if @ready_to_queue.size == 0
 
         Sidekiq.redis do |r|
-          r.multi do
-            r.hincrby(@bidkey, "pending", @ready_to_queue.size)
-            r.hincrby(@bidkey, "total", @ready_to_queue.size)
-            r.expire(@bidkey, BID_EXPIRE_TTL)
+          r.multi do |pipeline|
+            pipeline.hincrby(@bidkey, "pending", @ready_to_queue.size)
+            pipeline.hincrby(@bidkey, "total", @ready_to_queue.size)
+            pipeline.expire(@bidkey, BID_EXPIRE_TTL)
 
-            r.sadd(@bidkey + "-jids", @ready_to_queue)
-            r.expire(@bidkey + "-jids", BID_EXPIRE_TTL)
+            pipeline.sadd(@bidkey + "-jids", [@ready_to_queue])
+            pipeline.expire(@bidkey + "-jids", BID_EXPIRE_TTL)
           end
         end
 
@@ -118,9 +118,9 @@ module Sidekiq
 
     def persist_bid_attr(attribute, value)
       Sidekiq.redis do |r|
-        r.multi do
-          r.hset(@bidkey, attribute, value)
-          r.expire(@bidkey, BID_EXPIRE_TTL)
+        r.multi do |pipeline|
+          pipeline.hset(@bidkey, attribute, value)
+          pipeline.expire(@bidkey, BID_EXPIRE_TTL)
         end
       end
     end
@@ -128,21 +128,21 @@ module Sidekiq
     class << self
       def process_failed_job(bid, jid)
         Sidekiq.redis do |r|
-          r.multi do
-            r.sadd("BID-#{bid}-failed", jid)
-            r.expire("BID-#{bid}-failed", BID_EXPIRE_TTL)
+          r.multi do |pipeline|
+            pipeline.sadd("BID-#{bid}-failed", [jid])
+            pipeline.expire("BID-#{bid}-failed", BID_EXPIRE_TTL)
           end
         end
       end
 
       def process_successful_job(bid, jid)
         Sidekiq.redis do |r|
-          r.multi do
-            r.hincrby("BID-#{bid}", "pending", -1)
-            r.srem("BID-#{bid}-failed", jid)
-            r.sadd("BID-#{bid}-completed", jid)
-            r.expire("BID-#{bid}", BID_EXPIRE_TTL)
-            r.expire("BID-#{bid}-completed", BID_EXPIRE_TTL)
+          r.multi do |pipeline|
+            pipeline.hincrby("BID-#{bid}", "pending", -1)
+            pipeline.srem("BID-#{bid}-failed", [jid])
+            pipeline.sadd("BID-#{bid}-completed", [jid])
+            pipeline.expire("BID-#{bid}", BID_EXPIRE_TTL)
+            pipeline.expire("BID-#{bid}-completed", BID_EXPIRE_TTL)
           end
         end
 
@@ -169,12 +169,12 @@ module Sidekiq
         status       = Status.new(bid)
         return if status.completed?
         callbacks, queue, current_shard = Sidekiq.redis do |r|
-          r.multi do
-            r.smembers(callback_key)
-            r.hget(batch_key, "callback_queue")
-            r.hget(batch_key, "current_shard")
-            r.set("#{batch_key}-callback_completed", 'true')
-            r.expire("#{batch_key}-callback_completed", BID_EXPIRE_TTL)
+          r.multi do |pipeline|
+            pipeline.smembers(callback_key)
+            pipeline.hget(batch_key, "callback_queue")
+            pipeline.hget(batch_key, "current_shard")
+            pipeline.set("#{batch_key}-callback_completed", 'true')
+            pipeline.expire("#{batch_key}-callback_completed", BID_EXPIRE_TTL)
           end
         end
         queue                           ||= "default"
