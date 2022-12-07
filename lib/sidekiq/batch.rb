@@ -89,7 +89,7 @@ module Sidekiq
             pipeline.hincrby(@bidkey, "total", @ready_to_queue.size)
             pipeline.expire(@bidkey, BID_EXPIRE_TTL)
 
-            pipeline.sadd(@bidkey + "-jids", [@ready_to_queue])
+            pipeline.sadd(@bidkey + "-jids", @ready_to_queue)
             pipeline.expire(@bidkey + "-jids", BID_EXPIRE_TTL)
           end
         end
@@ -181,21 +181,16 @@ module Sidekiq
         current_shard                   ||= "default"
         callback_args                   = callbacks.reduce([]) do |memo, jcb|
           cb = Sidekiq.load_json(jcb)
-          memo << [cb['callback'], event, cb['opts'], bid]
+          memo << [cb['callback'], event.to_s, cb['opts'], bid]
         end
 
         Sidekiq.logger.debug { "Enqueue callback bid: #{bid} event: #{event} args: #{callback_args.inspect}" }
-        cleanup_redis('bid')
         push_callbacks callback_args, queue, current_shard
+        cleanup_redis('bid')
       end
 
       def push_callbacks args, queue, current_shard
-        Sidekiq::Client.push_bulk(
-          'class' => Sidekiq::Batch::Callback::Worker,
-          'args'  => args,
-          'queue' => queue,
-          'tags'  => [current_shard]
-        ) unless args.empty?
+        Sidekiq::Batch::Callback::Worker.set(queue: queue, tags: [current_shard]).perform_async(*args.first)
       end
 
       def cleanup_redis(bid)
