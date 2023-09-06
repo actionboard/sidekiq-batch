@@ -41,6 +41,7 @@ module Sidekiq
 
     def on(event, callback, options = {})
       return unless %w(success complete).include?(event.to_s)
+      current_shard = ApplicationRecord.current_shard
       callback_key = "#{@bidkey}-callbacks-#{event}"
       Sidekiq.redis do |r|
         r.multi do |pipeline|
@@ -190,7 +191,9 @@ module Sidekiq
       end
 
       def push_callbacks args, queue, curr_shard
-        Sidekiq::Batch::Callback::Worker.set(queue: queue, tags: [curr_shard]).perform_async(*args.first)
+        Current.set(subdomain: curr_shard) do
+          Sidekiq::Batch::Callback::Worker.set(queue: queue).perform_async(*args.first)
+        end
       end
 
       def cleanup_redis(bid)
