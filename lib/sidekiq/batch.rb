@@ -41,7 +41,7 @@ module Sidekiq
 
     def on(event, callback, options = {})
       return unless %w(success complete).include?(event.to_s)
-      current_shard = ApplicationRecord.current_shard
+      self.current_shard = ApplicationRecord.current_shard
       callback_key = "#{@bidkey}-callbacks-#{event}"
       Sidekiq.redis do |r|
         r.multi do |pipeline|
