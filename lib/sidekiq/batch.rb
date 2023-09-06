@@ -34,9 +34,9 @@ module Sidekiq
       persist_bid_attr('callback_queue', callback_queue)
     end
 
-    def current_shard=(current_shard)
-      @current_shard = current_shard
-      persist_bid_attr('current_shard', current_shard)
+    def current_shard=(val)
+      @current_shard = val
+      persist_bid_attr('current_shard', val)
     end
 
     def on(event, callback, options = {})
@@ -168,7 +168,7 @@ module Sidekiq
         callback_key = "#{batch_key}-callbacks-#{event}"
         status       = Status.new(bid)
         return if status.completed?
-        callbacks, queue, current_shard = Sidekiq.redis do |r|
+        callbacks, queue, curr_shard = Sidekiq.redis do |r|
           r.multi do |pipeline|
             pipeline.smembers(callback_key)
             pipeline.hget(batch_key, "callback_queue")
@@ -178,19 +178,19 @@ module Sidekiq
           end
         end
         queue                           ||= "default"
-        current_shard                   ||= "default"
+        curr_shard                   ||= "default"
         callback_args                   = callbacks.reduce([]) do |memo, jcb|
           cb = Sidekiq.load_json(jcb)
           memo << [cb['callback'], event.to_s, cb['opts'], bid]
         end
 
         Sidekiq.logger.debug { "Enqueue callback bid: #{bid} event: #{event} args: #{callback_args.inspect}" }
-        push_callbacks callback_args, queue, current_shard
+        push_callbacks callback_args, queue, curr_shard
         cleanup_redis('bid')
       end
 
-      def push_callbacks args, queue, current_shard
-        Sidekiq::Batch::Callback::Worker.set(queue: queue, tags: [current_shard]).perform_async(*args.first)
+      def push_callbacks args, queue, curr_shard
+        Sidekiq::Batch::Callback::Worker.set(queue: queue, tags: [curr_shard]).perform_async(*args.first)
       end
 
       def cleanup_redis(bid)
