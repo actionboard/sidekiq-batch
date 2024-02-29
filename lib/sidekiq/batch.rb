@@ -191,7 +191,8 @@ module Sidekiq
       end
 
       def push_callbacks args, queue, curr_shard
-        Current.set(subdomain: curr_shard) do
+        klass = Rails.application.class.module_parent.name == 'Apollo' ? 'ApolloCurrent' : 'Current'
+        klass.safe_constantize.set(subdomain: curr_shard) do
           Sidekiq::Batch::Callback::Worker.set(queue: queue).perform_async(*args.first)
         end
       end
