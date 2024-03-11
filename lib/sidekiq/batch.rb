@@ -42,12 +42,12 @@ module Sidekiq
     def on(event, callback, options = {})
       return unless %w(success complete).include?(event.to_s)
       self.current_shard = ApplicationRecord.current_shard
-      callback_key = "#{@bidkey}-callbacks-#{event}"
+      callback_key       = "#{@bidkey}-callbacks-#{event}"
       Sidekiq.redis do |r|
         r.multi do |pipeline|
           pipeline.sadd(callback_key, [JSON.unparse({
                                                       callback: callback,
-                                                      opts: options
+                                                      opts:     options
                                                     })])
           pipeline.expire(callback_key, BID_EXPIRE_TTL)
         end
@@ -178,9 +178,9 @@ module Sidekiq
             pipeline.expire("#{batch_key}-callback_completed", BID_EXPIRE_TTL)
           end
         end
-        queue                           ||= "default"
+        queue                        ||= "default"
         curr_shard                   ||= "default"
-        callback_args                   = callbacks.reduce([]) do |memo, jcb|
+        callback_args                = callbacks.reduce([]) do |memo, jcb|
           cb = Sidekiq.load_json(jcb)
           memo << [cb['callback'], event.to_s, cb['opts'], bid]
         end
@@ -191,7 +191,7 @@ module Sidekiq
       end
 
       def push_callbacks args, queue, curr_shard
-        klass = Rails.application.class.module_parent.name == 'Apollo' ? 'ApolloCurrent' : 'Current'
+        klass = 'Rails'.safe_constantize.application.class.module_parent.name == 'Apollo' ? 'ApolloCurrent' : 'Current'
         klass.safe_constantize.set(subdomain: curr_shard) do
           Sidekiq::Batch::Callback::Worker.set(queue: queue).perform_async(*args.first)
         end
@@ -210,7 +210,7 @@ module Sidekiq
             "BID-#{bid}-success",
             "BID-#{bid}-complete",
             "BID-#{bid}-jids",
-            )
+          )
         end
       end
     end
