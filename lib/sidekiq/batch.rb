@@ -107,12 +107,15 @@ module Sidekiq
 
     def invalidate_all
       Sidekiq.redis do |r|
-        r.setex("invalidated-bid-#{bid}", BID_EXPIRE_TTL, 1)
+        # `setex` is deprecated by Sidekiq's Redis adapter; use SET with EX.
+        r.set("invalidated-bid-#{bid}", 1, ex: BID_EXPIRE_TTL)
       end
     end
 
     def valid?(batch = self)
-      !Sidekiq.redis { |r| r.exists("invalidated-bid-#{batch.bid}") }
+      # redis-client (Sidekiq 7+) returns an Integer (0/1) from EXISTS, so use
+      # `.zero?` instead of `!` to get the correct boolean.
+      Sidekiq.redis { |r| r.exists("invalidated-bid-#{batch.bid}") }.zero?
     end
 
     private

@@ -2,7 +2,7 @@ module Sidekiq
   class Batch
     module Callback
       class Worker
-        include Sidekiq::Worker
+        include Sidekiq::Job
 
         def perform(clazz, event, opts, bid)
           return unless %w(success complete).include?(event)

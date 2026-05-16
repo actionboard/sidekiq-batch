@@ -46,7 +46,7 @@ module Sidekiq
             chain.add Sidekiq::Batch::Middleware::ServerMiddleware
           end
         end
-        Sidekiq::Worker.send(:include, Sidekiq::Batch::Extension::Worker)
+        Sidekiq::Job.send(:include, Sidekiq::Batch::Extension::Worker)
       end
     end
   end
